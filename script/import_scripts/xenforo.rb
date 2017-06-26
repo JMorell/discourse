@@ -16,7 +16,7 @@ class ImportScripts::XenForo < ImportScripts::Base
     @client = Mysql2::Client.new(
       host: "localhost",
       username: "root",
-      password: "pa$$word",
+      password: "",
       database: XENFORO_DB
     )
   end
@@ -35,8 +35,8 @@ class ImportScripts::XenForo < ImportScripts::Base
     batches(BATCH_SIZE) do |offset|
       results = mysql_query(
         "SELECT user_id id, username, email, custom_title title, register_date created_at,
-                last_activity last_visit_time, user_group_id, is_moderator, is_admin, is_staff
-         FROM #{TABLE_PREFIX}user
+                last_activity last_visit_time, user_group_id
+				FROM #{TABLE_PREFIX}user
          LIMIT #{BATCH_SIZE}
          OFFSET #{offset};")
 
@@ -45,15 +45,15 @@ class ImportScripts::XenForo < ImportScripts::Base
       next if all_records_exist? :users, results.map {|u| u["id"].to_i}
 
       create_users(results, total: total_count, offset: offset) do |user|
-        next if user['username'].blank?
+        next if user['username'].blank? || user['email'].start_with?('@')
         { id: user['id'],
           email: user['email'],
           username: user['username'],
           title: user['title'],
           created_at: Time.zone.at(user['created_at']),
           last_seen_at: Time.zone.at(user['last_visit_time']),
-          moderator: user['is_moderator'] == 1 || user['is_staff'] == 1,
-          admin: user['is_admin'] == 1 }
+          moderator: false,
+          admin: false }
       end
     end
   end
@@ -63,15 +63,15 @@ class ImportScripts::XenForo < ImportScripts::Base
 
     # Note that this script uses Prefix as Category, you may want to change this as per your requirement
     categories = mysql_query("
-                              SELECT prefix_id id
-                              FROM #{TABLE_PREFIX}thread_prefix
-                              ORDER BY prefix_id ASC
+                              SELECT node_id id, title
+                              FROM #{TABLE_PREFIX}node
+                              ORDER BY node_id ASC
                             ").to_a
 
     create_categories(categories) do |category|
       {
         id: category["id"],
-        name: "Category-#{category["id"]}"
+        name: category["title"]
       }
     end
   end
@@ -85,7 +85,7 @@ class ImportScripts::XenForo < ImportScripts::Base
       results = mysql_query("
         SELECT p.post_id id,
                t.thread_id topic_id,
-               t.prefix_id category_id,
+               t.node_id category_id,
                t.title title,
                t.first_post_id first_post_id,
                p.user_id user_id,
