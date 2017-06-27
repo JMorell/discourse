@@ -8,7 +8,7 @@ class ImportScripts::XenForo < ImportScripts::Base
 
   XENFORO_DB = "xenforo_db"
   TABLE_PREFIX = "xf_"
-  BATCH_SIZE = 100
+  BATCH_SIZE = 1000
   #FORUM URL WITH HTTP://
   FORUM_URL = ""
 
@@ -157,7 +157,7 @@ class ImportScripts::XenForo < ImportScripts::Base
 
   end
 
-  def process_xenforo_post(raw)
+  def process_xenforo_post(raw, import_id)
     s = raw.dup
 
     # :) is encoded as <!-- s:) --><img src="{SMILIES_PATH}/icon_e_smile.gif" alt=":)" title="Smile" /><!-- s:) -->
