@@ -8,7 +8,7 @@ class ImportScripts::XenForo < ImportScripts::Base
 
   XENFORO_DB = "xenforo_db"
   TABLE_PREFIX = "xf_"
-  BATCH_SIZE = 1000
+  BATCH_SIZE = 100
   #FORUM URL WITH HTTP://
   FORUM_URL = ""
 
@@ -36,9 +36,10 @@ class ImportScripts::XenForo < ImportScripts::Base
 
     batches(BATCH_SIZE) do |offset|
       results = mysql_query(
-        "SELECT user_id id, username, email, custom_title title, register_date created_at,
-                last_activity last_visit_time, user_group_id, avatar_date
-				FROM #{TABLE_PREFIX}user
+        "SELECT u.user_id id, u.username username, u.email email, u.custom_title title, u.register_date created_at,
+                u.last_activity last_visit_time, u.user_group_id, u.avatar_date, ua.data password
+				FROM #{TABLE_PREFIX}user u, #{TABLE_PREFIX}user_authenticate ua
+				WHERE u.user_id = ua.user_id
          LIMIT #{BATCH_SIZE}
          OFFSET #{offset};")
 
@@ -51,6 +52,7 @@ class ImportScripts::XenForo < ImportScripts::Base
         { id: user['id'],
           email: user['email'],
           username: user['username'],
+		  password: user['password'],
           title: user['title'],
           created_at: Time.zone.at(user['created_at']),
           last_seen_at: Time.zone.at(user['last_visit_time']),
@@ -155,7 +157,7 @@ class ImportScripts::XenForo < ImportScripts::Base
 
   end
 
-  def process_xenforo_post(raw, import_id)
+  def process_xenforo_post(raw)
     s = raw.dup
 
     # :) is encoded as <!-- s:) --><img src="{SMILIES_PATH}/icon_e_smile.gif" alt=":)" title="Smile" /><!-- s:) -->
@@ -217,7 +219,51 @@ class ImportScripts::XenForo < ImportScripts::Base
     # Remove the color tag
     s.gsub!(/\[color=[#a-z0-9]+\]/i, "")
     s.gsub!(/\[\/color\]/i, "")
-
+	
+  	# [FONT=font]text[/FONT]
+  	s.gsub!(/\[font=(.+?)\](.+?)\[\/font\]/i) { $2 }
+	
+  	# [FONT=font]\ntext[/FONT]
+  	s.gsub!(/\[font=(.+?)\]\r?\n(.+?)\[\/font\]/i) { $2 }
+  	
+  	# [FONT=text]
+  	s.gsub!(/\[font=(.+?)\]/i) { $2 }
+  	
+  	# [/FONT]
+  	s.gsub!(/\[\/font\]/i) { $2 }
+  	
+  	# [LIST]
+  	s.gsub!(/\[list\]/i) { "" }
+	
+	# [LIST=1]
+  	s.gsub!(/\[list=(.+?)\]/i) { "" }
+  	
+  	# [/LIST]
+  	s.gsub!(/\[\/list\]/i) { "" }
+  	
+  	# [*]
+  	s.gsub!(/\[\*\]/i) { " * " }
+  	
+  	# [H2]text[/H2]
+  	s.gsub!(/\[h2\](.+?)\[\/h2\]/i) { "\n# $1\n" }
+  	
+  	# [SPOILER]text[/SPOILER]
+  	s.gsub!(/\[spoiler\](.+?)\[\/spoiler\]/i) { "[details=Spoiler]$1[/details]" }
+  	
+  	# [spoiler=""]text[/spoiler]
+  	s.gsub!(/\[spoiler=(.+?)\](.+?)\[\/spoiler\]/i) { "[details=$1]$2[/details]" }
+  
+  	# [SIZE=""]text[/SIZE]
+  	size = s.match(/\[size="?(.+?)"?\](.+)\[\/size\]/i)[1] unless s.match(/\[size="?(.+?)"?\](.+)\[\/size\]/i).nil?
+  	if size != nil
+  	  if size.to_i <= 2
+  	    s.gsub!(/\[size="?(.+?)"?\](.+)\[\/size\]/i) { "<small>#{$2}</small>" }
+  	  elsif size.to_i <= 5
+  		s.gsub!(/\[size="?(.+?)"?\](.+)\[\/size\]/i) { "<medium>#{$2}</medium>" }
+  	  elsif size.to_i <= 7
+  	    s.gsub!(/\[size="?(.+?)"?\](.+)\[\/size\]/i) { "<big>#{$2}</big>" }
+  	  end
+  	end
     s
   end
 
@@ -229,7 +275,6 @@ class ImportScripts::XenForo < ImportScripts::Base
     begin
       group = filename / 1000
       hotlinked = FileHelper.download(FORUM_URL + '/data/avatars/l/' + group.to_i.to_s + '/' + filename.to_s + '.jpg?' + filedate.to_s, max_file_size: SiteSetting.max_image_size_kb.kilobytes, tmp_file_name: "discourse-hotlinked", follow_redirect: true)
-	  puts hotlinked
     rescue StandardError => err
         puts "Error downloading avatar: #{err.message}. Skipping..."
     end
