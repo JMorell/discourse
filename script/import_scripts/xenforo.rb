@@ -184,6 +184,9 @@ class ImportScripts::XenForo < ImportScripts::Base
 
     # [QUOTE]...[/QUOTE]
     s.gsub!(/\[quote\](.+?)\[\/quote\]/im) { "\n> #{$1}\n" }
+    
+    # [QUOTE]...[/QUOTE]
+    s.gsub!(/\[quote\](.+?)\[\/quote\]/im) { "\n> #{$1}\n" }
 
     # [URL=...]...[/URL]
     s.gsub!(/\[url="?(.+?)"?\](.+)\[\/url\]/i) { "[#{$2}](#{$1})" }
@@ -234,8 +237,8 @@ class ImportScripts::XenForo < ImportScripts::Base
   	
   	# [LIST]
   	s.gsub!(/\[list\]/i) { "" }
-	
-	# [LIST=1]
+  	
+  	# [LIST=1]
   	s.gsub!(/\[list=(.+?)\]/i) { "" }
   	
   	# [/LIST]
@@ -244,14 +247,26 @@ class ImportScripts::XenForo < ImportScripts::Base
   	# [*]
   	s.gsub!(/\[\*\]/i) { " * " }
   	
-  	# [H2]text[/H2]
-  	s.gsub!(/\[h2\](.+?)\[\/h2\]/i) { "\n# $1\n" }
+  	# [h2]text[/h2]
+  	s.gsub!(/\[h2\](.+?)\[\/h2\]/i) { "\n# #{$1}\n" }
   	
   	# [SPOILER]text[/SPOILER]
-  	s.gsub!(/\[spoiler\](.+?)\[\/spoiler\]/i) { "[details=Spoiler]$1[/details]" }
+  	s.gsub!(/\[spoiler\](.+?)\[\/spoiler\]/i) { "[details=Spoiler]#{$1}[/details]" }
   	
-  	# [spoiler=""]text[/spoiler]
-  	s.gsub!(/\[spoiler=(.+?)\](.+?)\[\/spoiler\]/i) { "[details=$1]$2[/details]" }
+  	# [SPOILER=""]text[/SPOILER]
+  	s.gsub!(/\[spoiler=(.+?)\](.+?)\[\/spoiler\]/i) { "[details=#{$1}]#{$2}[/details]" }
+  	
+  	# [CENTER]text[/CENTER]
+  	s.gsub!(/\[center\](.+?)\[\/center\]/i) { "<div align=center>#{$1}</div>" }
+  	
+  	# [LEFT]text[/LEFT]
+  	s.gsub!(/\[left\](.+?)\[\/left\]/i) { "<div align=left>#{$1}</div>" }
+  	
+  	# [RIGHT]text[/RIGHT]
+  	s.gsub!(/\[right\](.+?)\[\/right\]/i) { "<div align=right>#{$1}</div>" }
+  	
+  	# [B]text[/B]
+  	s.gsub!(/\[b\](.+?)\[\/b\]/i) { "**#{$1}**" }
   
   	# [SIZE=""]text[/SIZE]
   	size = s.match(/\[size="?(.+?)"?\](.+)\[\/size\]/i)[1] unless s.match(/\[size="?(.+?)"?\](.+)\[\/size\]/i).nil?
