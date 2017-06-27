@@ -9,6 +9,8 @@ class ImportScripts::XenForo < ImportScripts::Base
   XENFORO_DB = "xenforo_db"
   TABLE_PREFIX = "xf_"
   BATCH_SIZE = 1000
+  #FORUM URL WITH HTTP://
+  FORUM_URL = ""
 
   def initialize
     super
@@ -35,7 +37,7 @@ class ImportScripts::XenForo < ImportScripts::Base
     batches(BATCH_SIZE) do |offset|
       results = mysql_query(
         "SELECT user_id id, username, email, custom_title title, register_date created_at,
-                last_activity last_visit_time, user_group_id
+                last_activity last_visit_time, user_group_id, avatar_date
 				FROM #{TABLE_PREFIX}user
          LIMIT #{BATCH_SIZE}
          OFFSET #{offset};")
@@ -53,11 +55,30 @@ class ImportScripts::XenForo < ImportScripts::Base
           created_at: Time.zone.at(user['created_at']),
           last_seen_at: Time.zone.at(user['last_visit_time']),
           moderator: false,
-          admin: false }
+          admin: false,
+		  post_create_action: proc do |client|
+		    if client.uploaded_avatar_id.blank? && user['avatar_date'] != 0
+			  puts user['id'].to_s
+              path = avatar_fullpath(user['id'], user['avatar_date']) and begin
+			    upload = create_upload(client.id, path, user['id'])
+			    if upload.persisted?
+                  client.create_user_avatar
+                  client.user_avatar.update(custom_upload_id: upload.id)
+                  client.update(uploaded_avatar_id: upload.id)
+                  client.refresh_avatar
+                else
+                  puts "Upload failed!"
+                end
+              rescue SystemCallError => err
+                puts "Could not import avatar: #{err.message}"
+              end
+			end
+		  end
+		}
       end
     end
   end
-
+  
   def import_categories
     puts "", "importing categories..."
 
@@ -202,6 +223,27 @@ class ImportScripts::XenForo < ImportScripts::Base
 
   def mysql_query(sql)
     @client.query(sql, cache_rows: false)
+  end
+  
+  def avatar_fullpath(filename, filedate)
+    begin
+      group = filename / 1000
+      hotlinked = FileHelper.download(FORUM_URL + '/data/avatars/l/' + group.to_i.to_s + '/' + filename.to_s + '.jpg?' + filedate.to_s, max_file_size: SiteSetting.max_image_size_kb.kilobytes, tmp_file_name: "discourse-hotlinked", follow_redirect: true)
+	  puts hotlinked
+    rescue StandardError => err
+        puts "Error downloading avatar: #{err.message}. Skipping..."
+    end
+    if hotlinked
+      if hotlinked.size <= SiteSetting.max_image_size_kb.kilobytes
+        return hotlinked
+      else
+        Rails.logger.error("Failed to pull hotlinked image: #{filename} - Image is bigger than #{@max_size}")
+          nil
+      end
+    else
+      Rails.logger.error("There was an error while downloading '#{filename}' locally.")
+      nil
+    end
   end
 end
 
