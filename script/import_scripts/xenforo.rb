@@ -9,7 +9,7 @@ class ImportScripts::XenForo < ImportScripts::Base
   XENFORO_DB = "xenforo_db"
   TABLE_PREFIX = "xf_"
   BATCH_SIZE = 1000
-  #FORUM URL WITH HTTP://
+  # XENFORO FORUM URL WITH HTTP://
   FORUM_URL = ""
 
   def initialize
@@ -60,7 +60,6 @@ class ImportScripts::XenForo < ImportScripts::Base
           admin: false,
 		  post_create_action: proc do |client|
 		    if client.uploaded_avatar_id.blank? && user['avatar_date'] != 0
-			  puts user['id'].to_s
               path = avatar_fullpath(user['id'], user['avatar_date']) and begin
 			    upload = create_upload(client.id, path, user['id'])
 			    if upload.persisted?
@@ -189,10 +188,14 @@ class ImportScripts::XenForo < ImportScripts::Base
     s.gsub!(/\[quote\](.+?)\[\/quote\]/im) { "\n> #{$1}\n" }
 
     # [URL=...]...[/URL]
-    s.gsub!(/\[url="?(.+?)"?\](.+)\[\/url\]/i) { "[#{$2}](#{$1})" }
+    s.gsub!(/(\[url\=("|''))(.+)("|'')\](.+)*\[\/url\]/i) { "[#{$5}](#{$3})" }
+
+    # [CENTER][IMG]text[/IMG][/CENTER]
+  	#s.gsub!(/\[center\]\[img\](.+?)\[\/img\]\[\/center\]/i) { "<div align=center><img src='#{$1}'></div>" }
 
     # [IMG]...[/IMG]
-    s.gsub!(/\[\/?img\]/i, "")
+    #s.gsub!(/\[\/?img\]/i, "")
+    s.gsub!(/\[img\](.+?)\[\/img\]/i) { "<img src='#{$1}'>" }
 
     # convert list tags to ul and list=1 tags to ol
     # (basically, we're only missing list=a here...)
@@ -253,8 +256,17 @@ class ImportScripts::XenForo < ImportScripts::Base
   	# [SPOILER]text[/SPOILER]
   	s.gsub!(/\[spoiler\](.+?)\[\/spoiler\]/i) { "[details=Spoiler]#{$1}[/details]" }
   	
+  	# [SPOILER]\ntext[/SPOILER]
+  	s.gsub!(/\[spoiler\]\r?\n(.+?)\[\/spoiler\]/i) { "[details=Spoiler]#{$1}[/details]" }
+  	
   	# [SPOILER=""]text[/SPOILER]
   	s.gsub!(/\[spoiler=(.+?)\](.+?)\[\/spoiler\]/i) { "[details=#{$1}]#{$2}[/details]" }
+  	
+  	# [SPOILER=""]
+  	s.gsub!(/\[spoiler=(.+?)\]/i) { "[details=#{$1}]" }
+  	
+  	# [/SPOILER]
+  	s.gsub!(/\[\/spoiler\]/i) { "[/details]" }
   	
   	# [CENTER]text[/CENTER]
   	s.gsub!(/\[center\](.+?)\[\/center\]/i) { "<div align=center>#{$1}</div>" }
@@ -266,17 +278,22 @@ class ImportScripts::XenForo < ImportScripts::Base
   	s.gsub!(/\[right\](.+?)\[\/right\]/i) { "<div align=right>#{$1}</div>" }
   	
   	# [B]text[/B]
-  	s.gsub!(/\[b\](.+?)\[\/b\]/i) { "**#{$1}**" }
+  	#s.gsub!(/\[b\](.+?)\[\/b\]/i) { "**#{$1}**" }
+  	
+  	# [INDENT=""]text[/INDENT]
+  	s.gsub! (/\[INDENT=(.*?)\](.*?)\[\/INDENT\]/im)  { "" }
   
   	# [SIZE=""]text[/SIZE]
-  	size = s.match(/\[size="?(.+?)"?\](.+)\[\/size\]/i)[1] unless s.match(/\[size="?(.+?)"?\](.+)\[\/size\]/i).nil?
-  	if size != nil
+  	size = s.match(/\[size=(.+?)\](.+?)\[\/size\]/i)[1] unless s.match(/\[size=(.+?)\](.+?)\[\/size\]/i).nil?
+  	
+  	if !size.nil?
+  	  size = size.gsub(/[^0-9]/, '')
   	  if size.to_i <= 2
-  	    s.gsub!(/\[size="?(.+?)"?\](.+)\[\/size\]/i) { "<small>#{$2}</small>" }
+  	    s.gsub!(/\[size=(.+?)\](.+?)\[\/size\]/i) { "<small>#{$2}</small>" }
   	  elsif size.to_i <= 5
-  		s.gsub!(/\[size="?(.+?)"?\](.+)\[\/size\]/i) { "<medium>#{$2}</medium>" }
+  		s.gsub!(/\[size=(.+?)\](.+?)\[\/size\]/i) { "<medium>#{$2}</medium>" }
   	  elsif size.to_i <= 7
-  	    s.gsub!(/\[size="?(.+?)"?\](.+)\[\/size\]/i) { "<big>#{$2}</big>" }
+  	    s.gsub!(/\[size=(.+?)\](.+?)\[\/size\]/i) { "<big>#{$2}</big>" }
   	  end
   	end
     s
