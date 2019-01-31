@@ -2,11 +2,11 @@ class UserApiKeysController < ApplicationController
 
   layout 'no_ember'
 
-  skip_before_filter :redirect_to_login_if_required, only: [:new]
-  skip_before_filter :check_xhr, :preload_json
-  before_filter :ensure_logged_in, only: [:create, :revoke, :undo_revoke]
+  requires_login only: [:create, :revoke, :undo_revoke]
+  skip_before_action :redirect_to_login_if_required, only: [:new]
+  skip_before_action :check_xhr, :preload_json
 
-  AUTH_API_VERSION ||= 2
+  AUTH_API_VERSION ||= 3
 
   def new
 
@@ -40,7 +40,7 @@ class UserApiKeysController < ApplicationController
     @client_id = params[:client_id]
     @auth_redirect = params[:auth_redirect]
     @push_url = params[:push_url]
-    @localized_scopes = params[:scopes].split(",").map{|s| I18n.t("user_api_key.scopes.#{s}")}
+    @localized_scopes = params[:scopes].split(",").map { |s| I18n.t("user_api_key.scopes.#{s}") }
     @scopes = params[:scopes]
 
   rescue Discourse::InvalidAccess
@@ -51,22 +51,23 @@ class UserApiKeysController < ApplicationController
 
     require_params
 
-    unless SiteSetting.allowed_user_api_auth_redirects
-                      .split('|')
-                      .any?{|u| params[:auth_redirect] == u}
+    if params.key?(:auth_redirect) && SiteSetting.allowed_user_api_auth_redirects
+        .split('|')
+        .none? { |u| params[:auth_redirect] == u }
 
-        raise Discourse::InvalidAccess
+      raise Discourse::InvalidAccess
     end
 
     raise Discourse::InvalidAccess unless meets_tl?
 
     validate_params
+    @application_name = params[:application_name]
 
     # destroy any old keys we had
     UserApiKey.where(user_id: current_user.id, client_id: params[:client_id]).destroy_all
 
     key = UserApiKey.create!(
-      application_name: params[:application_name],
+      application_name: @application_name,
       client_id: params[:client_id],
       user_id: current_user.id,
       push_url: params[:push_url],
@@ -76,7 +77,7 @@ class UserApiKeysController < ApplicationController
 
     # we keep the payload short so it encrypts easily with public key
     # it is often restricted to 128 chars
-    payload = {
+    @payload = {
       key: key.key,
       nonce: params[:nonce],
       push: key.has_push?,
@@ -84,9 +85,19 @@ class UserApiKeysController < ApplicationController
     }.to_json
 
     public_key = OpenSSL::PKey::RSA.new(params[:public_key])
-    payload = Base64.encode64(public_key.public_encrypt(payload))
+    @payload = Base64.encode64(public_key.public_encrypt(@payload))
 
-    redirect_to "#{params[:auth_redirect]}?payload=#{CGI.escape(payload)}"
+    if params[:auth_redirect]
+      redirect_to("#{params[:auth_redirect]}?payload=#{CGI.escape(@payload)}")
+    else
+      respond_to do |format|
+        format.html { render :show }
+        format.json do
+          instructions = I18n.t("user_api_key.instructions", application_name: @application_name)
+          render json: { payload: @payload, instructions: instructions }
+        end
+      end
+    end
   end
 
   def revoke
@@ -124,9 +135,8 @@ class UserApiKeysController < ApplicationController
      :nonce,
      :scopes,
      :client_id,
-     :auth_redirect,
      :application_name
-    ].each{|p| params.require(p)}
+    ].each { |p| params.require(p) }
   end
 
   def validate_params

@@ -1,29 +1,52 @@
 require_relative "base"
+require "set"
 require "mysql2"
 require "htmlentities"
 
 class BulkImport::VBulletin < BulkImport::Base
 
+  TABLE_PREFIX = "vb_"
   SUSPENDED_TILL ||= Date.new(3000, 1, 1)
 
   def initialize
     super
 
-    host     = ENV["DB_HOST"]
+    host     = ENV["DB_HOST"] || "localhost"
     username = ENV["DB_USERNAME"] || "root"
     password = ENV["DB_PASSWORD"]
     database = ENV["DB_NAME"] || "vbulletin"
+    charset  = ENV["DB_CHARSET"] || "utf8"
 
     @html_entities = HTMLEntities.new
+    @encoding = CHARSET_MAP[charset]
 
-    @client = Mysql2::Client.new(host: host, username: username, password: password, database: database)
+    @client = Mysql2::Client.new(
+      host: host,
+      username: username,
+      password: password,
+      database: database,
+      encoding: charset
+    )
+
     @client.query_options.merge!(as: :array, cache_rows: false)
+
+    @has_post_thanks = mysql_query(<<-SQL
+        SELECT `COLUMN_NAME`
+          FROM `INFORMATION_SCHEMA`.`COLUMNS`
+         WHERE `TABLE_SCHEMA`='#{database}'
+           AND `TABLE_NAME`='user'
+           AND `COLUMN_NAME` LIKE 'post_thanks_%'
+    SQL
+    ).to_a.count > 0
   end
 
   def execute
     import_groups
     import_users
     import_group_users
+
+    import_user_emails
+    import_user_stats
 
     import_user_passwords
     import_user_salts
@@ -32,6 +55,8 @@ class BulkImport::VBulletin < BulkImport::Base
     import_categories
     import_topics
     import_posts
+
+    import_likes
 
     import_private_topics
     import_topic_allowed_users
@@ -43,7 +68,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
     groups = mysql_stream <<-SQL
         SELECT usergroupid, title, description, usertitle
-          FROM usergroup
+          FROM #{TABLE_PREFIX}usergroup
          WHERE usergroupid > #{@last_imported_group_id}
       ORDER BY usergroupid
     SQL
@@ -51,9 +76,9 @@ class BulkImport::VBulletin < BulkImport::Base
     create_groups(groups) do |row|
       {
         imported_id: row[0],
-        name: html_decode(row[1]),
-        bio_raw: html_decode(row[2]),
-        title: html_decode(row[3]),
+        name: normalize_text(row[1]),
+        bio_raw: normalize_text(row[2]),
+        title: normalize_text(row[3]),
       }
     end
   end
@@ -62,18 +87,18 @@ class BulkImport::VBulletin < BulkImport::Base
     puts "Importing users..."
 
     users = mysql_stream <<-SQL
-        SELECT user.userid, username, email, joindate, birthday, ipaddress, user.usergroupid, bandate, liftdate
-          FROM user
-     LEFT JOIN userban ON userban.userid = user.userid
-         WHERE user.userid > #{@last_imported_user_id}
-      ORDER BY user.userid
+        SELECT u.userid, username, email, joindate, birthday, ipaddress, u.usergroupid, bandate, liftdate
+          FROM #{TABLE_PREFIX}user u
+     LEFT JOIN #{TABLE_PREFIX}userban ub ON ub.userid = u.userid
+         WHERE u.userid > #{@last_imported_user_id}
+      ORDER BY u.userid
     SQL
 
     create_users(users) do |row|
       u = {
         imported_id: row[0],
-        username: row[1],
-        email: row[2],
+        username: normalize_text(row[1]),
+        name: normalize_text(row[1]),
         created_at: Time.zone.at(row[3]),
         date_of_birth: parse_birthday(row[4]),
         primary_group_id: group_id_from_imported_id(row[6]),
@@ -87,12 +112,65 @@ class BulkImport::VBulletin < BulkImport::Base
     end
   end
 
+  def import_user_emails
+    puts "Importing user emails..."
+
+    users = mysql_stream <<-SQL
+        SELECT u.userid, email, joindate
+          FROM #{TABLE_PREFIX}user u
+         WHERE u.userid > #{@last_imported_user_id}
+      ORDER BY u.userid
+    SQL
+
+    create_user_emails(users) do |row|
+      {
+        imported_id: row[0],
+        imported_user_id: row[0],
+        email: row[1],
+        created_at: Time.zone.at(row[2])
+      }
+    end
+  end
+
+  def import_user_stats
+    puts "Importing user stats..."
+
+    users = mysql_stream <<-SQL
+              SELECT u.userid, joindate, posts, COUNT(t.threadid) AS threads, p.dateline
+                     #{", post_thanks_user_amount, post_thanks_thanked_times" if @has_post_thanks}
+                FROM #{TABLE_PREFIX}user u
+     LEFT OUTER JOIN #{TABLE_PREFIX}post p ON p.postid = u.lastpostid
+     LEFT OUTER JOIN #{TABLE_PREFIX}thread t ON u.userid = t.postuserid
+               WHERE u.userid > #{@last_imported_user_id}
+            GROUP BY u.userid
+            ORDER BY u.userid
+    SQL
+
+    create_user_stats(users) do |row|
+      user = {
+        imported_id: row[0],
+        imported_user_id: row[0],
+        new_since: Time.zone.at(row[1]),
+        post_count: row[2],
+        topic_count: row[3],
+        first_post_created_at: row[4] && Time.zone.at(row[4])
+      }
+
+      if @has_post_thanks
+        user[:likes_given] = row[5]
+        user[:likes_received] = row[6]
+      end
+
+      user
+    end
+  end
+
   def import_group_users
     puts "Importing group users..."
 
     group_users = mysql_stream <<-SQL
       SELECT usergroupid, userid
-        FROM user
+        FROM #{TABLE_PREFIX}user
        WHERE userid > #{@last_imported_user_id}
     SQL
 
@@ -109,7 +187,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
     user_passwords = mysql_stream <<-SQL
         SELECT userid, password
-          FROM user
+          FROM #{TABLE_PREFIX}user
          WHERE userid > #{@last_imported_user_id}
       ORDER BY userid
     SQL
@@ -127,7 +205,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
     user_salts = mysql_stream <<-SQL
         SELECT userid, salt
-          FROM user
+          FROM #{TABLE_PREFIX}user
          WHERE userid > #{@last_imported_user_id}
            AND LENGTH(COALESCE(salt, '')) > 0
       ORDER BY userid
@@ -146,7 +224,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
     user_profiles = mysql_stream <<-SQL
         SELECT userid, homepage, profilevisits
-          FROM user
+          FROM #{TABLE_PREFIX}user
          WHERE userid > #{@last_imported_user_id}
       ORDER BY userid
     SQL
@@ -165,7 +243,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
     categories = mysql_query(<<-SQL
         SELECT forumid, parentid, title, description, displayorder
-          FROM forum
+          FROM #{TABLE_PREFIX}forum
          WHERE forumid > #{@last_imported_category_id}
       ORDER BY forumid
     SQL
@@ -189,8 +267,8 @@ class BulkImport::VBulletin < BulkImport::Base
     create_categories(parent_categories) do |row|
       {
         imported_id: row[0],
-        name: html_decode(row[2]),
-        description: html_decode(row[3]),
+        name: normalize_text(row[2]),
+        description: normalize_text(row[3]),
         position: row[4],
       }
     end
@@ -199,8 +277,8 @@ class BulkImport::VBulletin < BulkImport::Base
     create_categories(children_categories) do |row|
       {
         imported_id: row[0],
-        name: html_decode(row[2]),
-        description: html_decode(row[3]),
+        name: normalize_text(row[2]),
+        description: normalize_text(row[3]),
         position: row[4],
         parent_category_id: category_id_from_imported_id(row[1]),
       }
@@ -212,9 +290,9 @@ class BulkImport::VBulletin < BulkImport::Base
 
     topics = mysql_stream <<-SQL
         SELECT threadid, title, forumid, postuserid, open, dateline, views, visible, sticky
-          FROM thread
+          FROM #{TABLE_PREFIX}thread t
          WHERE threadid > #{@last_imported_topic_id}
-           AND EXISTS (SELECT 1 FROM post WHERE post.threadid = thread.threadid)
+           AND EXISTS (SELECT 1 FROM #{TABLE_PREFIX}post p WHERE p.threadid = t.threadid)
       ORDER BY threadid
     SQL
 
@@ -223,7 +301,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
       t = {
         imported_id: row[0],
-        title: html_decode(row[1]),
+        title: normalize_text(row[1]),
         category_id: category_id_from_imported_id(row[2]),
         user_id: user_id_from_imported_id(row[3]),
         closed: row[4] == 0,
@@ -242,9 +320,11 @@ class BulkImport::VBulletin < BulkImport::Base
     puts "Importing posts..."
 
     posts = mysql_stream <<-SQL
-        SELECT postid, post.threadid, parentid, userid, post.dateline, post.visible, pagetext
-          FROM post
-          JOIN thread ON thread.threadid = post.threadid
+        SELECT postid, p.threadid, parentid, userid, p.dateline, p.visible, pagetext
+               #{", post_thanks_amount" if @has_post_thanks}
+
+          FROM #{TABLE_PREFIX}post p
+          JOIN #{TABLE_PREFIX}thread t ON t.threadid = p.threadid
          WHERE postid > #{@last_imported_post_id}
       ORDER BY postid
     SQL
@@ -254,14 +334,47 @@ class BulkImport::VBulletin < BulkImport::Base
       replied_post_topic_id = topic_id_from_imported_post_id(row[2])
       reply_to_post_number = topic_id == replied_post_topic_id ? post_number_from_imported_id(row[2]) : nil
 
-      {
+      post = {
         imported_id: row[0],
         topic_id: topic_id,
         reply_to_post_number: reply_to_post_number,
         user_id: user_id_from_imported_id(row[3]),
         created_at: Time.zone.at(row[4]),
         hidden: row[5] == 0,
-        raw: html_decode(row[6]),
+        raw: normalize_text(row[6]),
+      }
+
+      post[:like_count] = row[7] if @has_post_thanks
+      post
+    end
+  end
+
+  def import_likes
+    return unless @has_post_thanks
+    puts "Importing likes..."
+
+    @imported_likes = Set.new
+    @last_imported_post_id = 0
+
+    post_thanks = mysql_stream <<-SQL
+        SELECT postid, userid, date
+          FROM #{TABLE_PREFIX}post_thanks
+         WHERE postid > #{@last_imported_post_id}
+      ORDER BY postid
+    SQL
+
+    create_post_actions(post_thanks) do |row|
+      post_id = post_id_from_imported_id(row[0])
+      user_id = user_id_from_imported_id(row[1])
+
+      next if post_id.nil? || user_id.nil?
+      next if @imported_likes.add?([post_id, user_id]).nil?
+
+      {
+        post_id: post_id_from_imported_id(row[0]),
+        user_id: user_id_from_imported_id(row[1]),
+        post_action_type_id: 2,
+        created_at: Time.zone.at(row[2])
       }
     end
   end
@@ -273,7 +386,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
     topics = mysql_stream <<-SQL
         SELECT pmtextid, title, fromuserid, touserarray, dateline
-          FROM pmtext
+          FROM #{TABLE_PREFIX}pmtext
          WHERE pmtextid > (#{@last_imported_private_topic_id - PRIVATE_OFFSET})
       ORDER BY pmtextid
     SQL
@@ -285,7 +398,6 @@ class BulkImport::VBulletin < BulkImport::Base
 
       next if @imported_topics.has_key?(key)
       @imported_topics[key] = row[0] + PRIVATE_OFFSET
-
       {
         archetype: Archetype.private_message,
         imported_id: row[0] + PRIVATE_OFFSET,
@@ -299,11 +411,11 @@ class BulkImport::VBulletin < BulkImport::Base
   def import_topic_allowed_users
     puts "Importing topic allowed users..."
 
-    allowed_users = []
+    allowed_users = Set.new
 
     mysql_stream(<<-SQL
         SELECT pmtextid, touserarray
-          FROM pmtext
+          FROM #{TABLE_PREFIX}pmtext
          WHERE pmtextid > (#{@last_imported_private_topic_id - PRIVATE_OFFSET})
       ORDER BY pmtextid
     SQL
@@ -328,7 +440,7 @@ class BulkImport::VBulletin < BulkImport::Base
 
     posts = mysql_stream <<-SQL
         SELECT pmtextid, title, fromuserid, touserarray, dateline, message
-          FROM pmtext
+          FROM #{TABLE_PREFIX}pmtext
          WHERE pmtextid > #{@last_imported_private_post_id - PRIVATE_OFFSET}
       ORDER BY pmtextid
     SQL
@@ -345,22 +457,19 @@ class BulkImport::VBulletin < BulkImport::Base
         topic_id: topic_id,
         user_id: user_id_from_imported_id(row[2]),
         created_at: Time.zone.at(row[4]),
-        raw: html_decode(row[5]),
+        raw: normalize_text(row[5]),
       }
     end
   end
 
   def extract_pm_title(title)
-    html_decode(title).scrub.gsub(/^Re\s*:\s*/i, "")
-  end
-
-  def html_decode(text)
-    @html_entities.decode((text.presence || "").scrub)
+    normalize_text(title).scrub.gsub(/^Re\s*:\s*/i, "")
   end
 
   def parse_birthday(birthday)
     return if birthday.blank?
-    date_of_birth = Date.strptime(birthday, "%m-%d-%Y")
+    date_of_birth = Date.strptime(birthday.gsub(/[^\d-]+/, ""), "%m-%d-%Y") rescue nil
+    return if date_of_birth.nil?
     date_of_birth.year < 1904 ? Date.new(1904, date_of_birth.month, date_of_birth.day) : date_of_birth
   end
 

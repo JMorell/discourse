@@ -1,15 +1,15 @@
 class Admin::WebHooksController < Admin::AdminController
-  before_filter :fetch_web_hook, only: %i(show update destroy list_events bulk_events ping)
+  before_action :fetch_web_hook, only: %i(show update destroy list_events bulk_events ping)
 
   def index
     limit = 50
     offset = params[:offset].to_i
 
     web_hooks = WebHook.limit(limit)
-                       .offset(offset)
-                       .includes(:web_hook_event_types)
-                       .includes(:categories)
-                       .includes(:groups)
+      .offset(offset)
+      .includes(:web_hook_event_types)
+      .includes(:categories)
+      .includes(:groups)
 
     json = {
       web_hooks: serialize_data(web_hooks, AdminWebHookSerializer),
@@ -111,6 +111,7 @@ class Admin::WebHooksController < Admin::AdminController
                                      :wildcard_web_hook, :active, :verify_certificate,
                                      web_hook_event_type_ids: [],
                                      group_ids: [],
+                                     tag_names: [],
                                      category_ids: [])
   end
 

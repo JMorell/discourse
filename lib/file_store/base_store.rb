@@ -28,6 +28,10 @@ module FileStore
       not_implemented
     end
 
+    def upload_path
+      File.join("uploads", RailsMultisite::ConnectionManagement.current_db)
+    end
+
     def has_been_uploaded?(url)
       not_implemented
     end
@@ -57,6 +61,10 @@ module FileStore
     end
 
     def path_for(upload)
+      not_implemented
+    end
+
+    def list_missing_uploads(skip_optimized: false)
       not_implemented
     end
 
@@ -90,17 +98,26 @@ module FileStore
 
     def get_path_for(type, id, sha, extension)
       depth = get_depth_for(id)
-      tree = File.join(*sha[0, depth].split(""), "")
+      tree = File.join(*sha[0, depth].chars, "")
       "#{type}/#{depth + 1}X/#{tree}#{sha}#{extension}"
     end
 
     def get_path_for_upload(upload)
-      get_path_for("original".freeze, upload.id, upload.sha1, upload.extension)
+      extension =
+        if upload.extension
+          ".#{upload.extension}"
+        else
+          # Maintain backward compatibility before Jobs::MigrateUploadExtensions runs
+          File.extname(upload.original_filename)
+        end
+
+      get_path_for("original".freeze, upload.id, upload.sha1, extension)
     end
 
     def get_path_for_optimized_image(optimized_image)
       upload = optimized_image.upload
-      extension = "_#{OptimizedImage::VERSION}_#{optimized_image.width}x#{optimized_image.height}#{optimized_image.extension}"
+      version = optimized_image.version || 1
+      extension = "_#{version}_#{optimized_image.width}x#{optimized_image.height}#{optimized_image.extension}"
       get_path_for("optimized".freeze, upload.id, upload.sha1, extension)
     end
 
@@ -119,10 +136,10 @@ module FileStore
     def cache_file(file, filename)
       path = get_cache_path_for(filename)
       dir = File.dirname(path)
-      FileUtils.mkdir_p(dir) unless Dir[dir].present?
+      FileUtils.mkdir_p(dir) unless Dir.exist?(dir)
       FileUtils.cp(file.path, path)
       # keep latest 500 files
-      `ls -tr #{CACHE_DIR} | head -n +#{CACHE_MAXIMUM_SIZE} | xargs rm -f`
+      `ls -tr #{CACHE_DIR} | head -n -#{CACHE_MAXIMUM_SIZE} | awk '$0="#{CACHE_DIR}"$0' | xargs rm -f`
     end
 
     private

@@ -31,7 +31,7 @@ BadgeGrouping.seed do |g|
 end
 
 # BUGFIX
-Badge.exec_sql <<-SQL.squish
+DB.exec <<-SQL.squish
   UPDATE badges
      SET badge_grouping_id = -1
    WHERE NOT EXISTS (
@@ -55,7 +55,7 @@ SQL
     b.default_badge_grouping_id = BadgeGrouping::TrustLevel
     b.trigger = Badge::Trigger::TrustLevelChange
     # allow title for tl3 and above
-    b.default_allow_title = id > 2
+    b.default_allow_title = id > Badge::Member
     b.default_icon = "fa-user"
     b.system = true
   end
@@ -134,7 +134,6 @@ Badge.seed do |b|
   b.target_posts = true
   b.show_posts = false
   b.query = BadgeQueries::FirstFlag
-  b.badge_grouping_id = BadgeGrouping::GettingStarted
   b.default_badge_grouping_id = BadgeGrouping::GettingStarted
   b.trigger = Badge::Trigger::PostAction
   b.auto_revoke = false
@@ -142,9 +141,9 @@ Badge.seed do |b|
 end
 
 [
-  [Badge::Promoter,"Promoter",BadgeType::Bronze,1,0],
-  [Badge::Campaigner,"Campaigner",BadgeType::Silver,3,1],
-  [Badge::Champion,"Champion",BadgeType::Gold,5,2],
+  [Badge::Promoter, "Promoter", BadgeType::Bronze, 1, 0],
+  [Badge::Campaigner, "Campaigner", BadgeType::Silver, 3, 1],
+  [Badge::Champion, "Champion", BadgeType::Gold, 5, 2],
 ].each do |id, name, type, count, trust_level|
   Badge.seed do |b|
     b.id = id
@@ -154,7 +153,7 @@ end
     b.multiple_grant = false
     b.target_posts = false
     b.show_posts = false
-    b.query = BadgeQueries.invite_badge(count,trust_level)
+    b.query = BadgeQueries.invite_badge(count, trust_level)
     b.default_badge_grouping_id = BadgeGrouping::Community
     # daily is good enough
     b.trigger = Badge::Trigger::None
@@ -227,7 +226,18 @@ Badge.seed do |b|
   b.badge_type_id = BadgeType::Bronze
   b.multiple_grant = false
   b.query = BadgeQueries::Editor
-  b.badge_grouping_id = BadgeGrouping::GettingStarted
+  b.default_badge_grouping_id = BadgeGrouping::GettingStarted
+  b.trigger = Badge::Trigger::PostRevision
+  b.system = true
+end
+
+Badge.seed do |b|
+  b.id = Badge::WikiEditor
+  b.name = "Wiki Editor"
+  b.badge_type_id = BadgeType::Bronze
+  b.multiple_grant = false
+  b.target_posts = true
+  b.query = BadgeQueries::WikiEditor
   b.default_badge_grouping_id = BadgeGrouping::GettingStarted
   b.trigger = Badge::Trigger::PostRevision
   b.system = true
@@ -281,7 +291,6 @@ end
     b.target_posts = true
     b.show_posts = true
     b.query = BadgeQueries.linking_badge(count)
-    b.badge_grouping_id = BadgeGrouping::Posting
     b.default_badge_grouping_id = BadgeGrouping::Posting
     # don't trigger for now, its too expensive
     b.trigger = Badge::Trigger::None
@@ -307,7 +316,6 @@ end
   end
 end
 
-
 [
   [Badge::ThankYou,   "Thank You",  BadgeType::Bronze, 20, 10],
   [Badge::GivesBack,  "Gives Back", BadgeType::Silver, 100, 100],
@@ -319,7 +327,6 @@ end
     b.default_icon = "fa-heart"
     b.badge_type_id = level
     b.query = BadgeQueries.liked_back(count, ratio)
-    b.badge_grouping_id = BadgeGrouping::Community
     b.default_badge_grouping_id = BadgeGrouping::Community
     b.trigger = Badge::Trigger::None
     b.auto_revoke = false
@@ -338,7 +345,6 @@ end
     b.default_icon = "fa-heart"
     b.badge_type_id = level
     b.query = BadgeQueries.like_rate_limit(count)
-    b.badge_grouping_id = BadgeGrouping::Community
     b.default_badge_grouping_id = BadgeGrouping::Community
     b.trigger = Badge::Trigger::None
     b.auto_revoke = false
@@ -354,7 +360,6 @@ Badge.seed do |b|
   b.target_posts = true
   b.show_posts = true
   b.query = BadgeQueries::FirstMention
-  b.badge_grouping_id = BadgeGrouping::GettingStarted
   b.default_badge_grouping_id = BadgeGrouping::GettingStarted
   b.trigger = Badge::Trigger::PostRevision
   b.system = true
@@ -368,7 +373,6 @@ Badge.seed do |b|
   b.target_posts = true
   b.show_posts = true
   b.query = nil
-  b.badge_grouping_id = BadgeGrouping::GettingStarted
   b.default_badge_grouping_id = BadgeGrouping::GettingStarted
   b.trigger = Badge::Trigger::None
   b.system = true
@@ -382,7 +386,6 @@ Badge.seed do |b|
   b.target_posts = true
   b.show_posts = true
   b.query = nil
-  b.badge_grouping_id = BadgeGrouping::GettingStarted
   b.default_badge_grouping_id = BadgeGrouping::GettingStarted
   b.trigger = Badge::Trigger::None
   b.system = true
@@ -396,7 +399,6 @@ Badge.seed do |b|
   b.target_posts = true
   b.show_posts = true
   b.query = nil
-  b.badge_grouping_id = BadgeGrouping::GettingStarted
   b.default_badge_grouping_id = BadgeGrouping::GettingStarted
   b.trigger = Badge::Trigger::None
   b.system = true
@@ -410,10 +412,27 @@ Badge.seed do |b|
   b.target_posts = false
   b.show_posts = false
   b.query = nil
-  b.badge_grouping_id = BadgeGrouping::GettingStarted
   b.default_badge_grouping_id = BadgeGrouping::GettingStarted
   b.trigger = Badge::Trigger::None
   b.system = true
+end
+
+[
+  [Badge::Enthusiast, "Enthusiast", BadgeType::Bronze, 10],
+  [Badge::Aficionado, "Aficionado", BadgeType::Silver, 100],
+  [Badge::Devotee,    "Devotee",    BadgeType::Gold,   365],
+].each do |id, name, level, days|
+  Badge.seed do |b|
+    b.id = id
+    b.name = name
+    b.default_icon = "fa-eye"
+    b.badge_type_id = level
+    b.query = BadgeQueries.consecutive_visits(days)
+    b.default_badge_grouping_id = BadgeGrouping::Community
+    b.trigger = Badge::Trigger::None
+    b.auto_revoke = false
+    b.system = true
+  end
 end
 
 Badge.where("NOT system AND id < 100").each do |badge|

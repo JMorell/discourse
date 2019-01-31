@@ -1,7 +1,7 @@
 class PostSerializer < BasicPostSerializer
 
   # To pass in additional information we might need
-  INSTANCE_VARS = [
+  INSTANCE_VARS ||= [
     :topic_view,
     :parent_post,
     :add_raw,
@@ -9,7 +9,8 @@ class PostSerializer < BasicPostSerializer
     :single_post_link_counts,
     :draft_sequence,
     :post_actions,
-    :all_post_actions
+    :all_post_actions,
+    :add_excerpt
   ]
 
   INSTANCE_VARS.each do |v|
@@ -68,7 +69,10 @@ class PostSerializer < BasicPostSerializer
              :via_email,
              :is_auto_generated,
              :action_code,
-             :action_code_who
+             :action_code_who,
+             :last_wiki_edit,
+             :locked,
+             :excerpt
 
   def initialize(object, opts)
     super(object, opts)
@@ -80,7 +84,7 @@ class PostSerializer < BasicPostSerializer
   end
 
   def topic_slug
-    object.topic && object.topic.slug
+    topic&.slug
   end
 
   def include_topic_title?
@@ -95,28 +99,32 @@ class PostSerializer < BasicPostSerializer
     @add_title
   end
 
+  def include_excerpt?
+    @add_excerpt
+  end
+
   def topic_title
-    object.topic.title
+    topic&.title
   end
 
   def topic_html_title
-    object.topic.fancy_title
+    topic&.fancy_title
   end
 
   def category_id
-    object.topic.category_id
+    topic&.category_id
   end
 
   def moderator?
-    !!(object.try(:user).try(:moderator?))
+    !!(object&.user&.moderator?)
   end
 
   def admin?
-    !!(object.try(:user).try(:admin?))
+    !!(object&.user&.admin?)
   end
 
   def staff?
-    !!(object.try(:user).try(:staff?))
+    !!(object&.user&.staff?)
   end
 
   def yours
@@ -140,7 +148,7 @@ class PostSerializer < BasicPostSerializer
   end
 
   def display_username
-    object.user.try(:name)
+    object.user&.name
   end
 
   def primary_group_name
@@ -154,15 +162,15 @@ class PostSerializer < BasicPostSerializer
   end
 
   def primary_group_flair_url
-    object.user.try(:primary_group).try(:flair_url)
+    object.user&.primary_group&.flair_url
   end
 
   def primary_group_flair_bg_color
-    object.user.try(:primary_group).try(:flair_bg_color)
+    object.user&.primary_group&.flair_bg_color
   end
 
   def primary_group_flair_color
-    object.user.try(:primary_group).try(:flair_color)
+    object.user&.primary_group&.flair_color
   end
 
   def link_counts
@@ -189,11 +197,11 @@ class PostSerializer < BasicPostSerializer
   end
 
   def user_title
-    object.try(:user).try(:title)
+    object&.user&.title
   end
 
   def trust_level
-    object.try(:user).try(:trust_level)
+    object&.user&.trust_level
   end
 
   def reply_to_user
@@ -225,14 +233,18 @@ class PostSerializer < BasicPostSerializer
   # Summary of the actions taken on this post
   def actions_summary
     result = []
-    PostActionType.types.each do |sym, id|
-      next if [:bookmark].include?(sym)
+    can_see_post = scope.can_see_post?(object)
+
+    PostActionType.types.except(:bookmark).each do |sym, id|
       count_col = "#{sym}_count".to_sym
 
       count = object.send(count_col) if object.respond_to?(count_col)
       summary = { id: id, count: count }
       summary[:hidden] = true if sym == :vote
-      summary[:can_act] = true if scope.post_can_act?(object, sym, taken_actions: actions)
+
+      if scope.post_can_act?(object, sym, opts: { taken_actions: actions }, can_see_post: can_see_post)
+        summary[:can_act] = true
+      end
 
       if sym == :notify_user && scope.current_user.present? && scope.current_user == object.user
         summary.delete(:can_act)
@@ -241,7 +253,7 @@ class PostSerializer < BasicPostSerializer
       # The following only applies if you're logged in
       if summary[:can_act] && scope.current_user.present?
         summary[:can_defer_flags] = true if scope.is_staff? &&
-                                                   PostActionType.flag_types.values.include?(id) &&
+                                                   PostActionType.flag_types_without_custom.values.include?(id) &&
                                                    active_flags.present? && active_flags.has_key?(id) &&
                                                    active_flags[id].count > 0
       end
@@ -276,7 +288,7 @@ class PostSerializer < BasicPostSerializer
   end
 
   def include_raw?
-    @add_raw.present? && (!object.hidden || scope.user.try(:staff?) || yours)
+    @add_raw.present? && (!object.hidden || scope.user&.staff? || yours)
   end
 
   def include_link_counts?
@@ -306,13 +318,11 @@ class PostSerializer < BasicPostSerializer
   end
 
   def user_custom_fields
-    @topic_view.user_custom_fields[object.user_id]
+    user_custom_fields_object[object.user_id]
   end
 
   def include_user_custom_fields?
-    return if @topic_view.blank?
-    custom_fields = @topic_view.user_custom_fields
-    custom_fields && custom_fields[object.user_id]
+    user_custom_fields_object[object.user_id]
   end
 
   def static_doc
@@ -328,7 +338,7 @@ class PostSerializer < BasicPostSerializer
   end
 
   def is_auto_generated
-    object.incoming_email.try(:is_auto_generated)
+    object.incoming_email&.is_auto_generated
   end
 
   def include_is_auto_generated?
@@ -336,6 +346,8 @@ class PostSerializer < BasicPostSerializer
   end
 
   def version
+    return 1 if object.hidden && !scope.can_view_hidden_post_revisions?
+
     scope.is_staff? ? object.version : object.public_version
   end
 
@@ -351,23 +363,55 @@ class PostSerializer < BasicPostSerializer
     include_action_code? && action_code_who.present?
   end
 
+  def locked
+    true
+  end
+
+  # Only show locked posts to the users who made the post and staff
+  def include_locked?
+    object.locked? && (yours || scope.is_staff?)
+  end
+
+  def last_wiki_edit
+    object.revisions.last.updated_at
+  end
+
+  def include_last_wiki_edit?
+    object.wiki &&
+    object.post_number == 1 &&
+    object.revisions.size > 0
+  end
+
+  def include_hidden_reason_id?
+    object.hidden
+  end
+
   private
 
-    def post_actions
-      @post_actions ||= (@topic_view.present? && @topic_view.all_post_actions.present?) ? @topic_view.all_post_actions[object.id] : nil
-    end
+  def user_custom_fields_object
+    (@topic_view&.user_custom_fields || @options[:user_custom_fields] || {})
+  end
 
-    def active_flags
-      @active_flags ||= (@topic_view.present? && @topic_view.all_active_flags.present?) ? @topic_view.all_active_flags[object.id] : nil
-    end
+  def topic
+    @topic = object.topic
+    @topic ||= Topic.with_deleted.find_by(id: object.topic_id) if scope.is_staff?
+    @topic
+  end
 
-    def post_custom_fields
-      @post_custom_fields ||=
-        if @topic_view
-          (@topic_view.post_custom_fields && @topic_view.post_custom_fields[object.id]) || {}
-        else
-          object.custom_fields
-        end
+  def post_actions
+    @post_actions ||= (@topic_view&.all_post_actions || {})[object.id]
+  end
+
+  def active_flags
+    @active_flags ||= (@topic_view&.all_active_flags || {})[object.id]
+  end
+
+  def post_custom_fields
+    @post_custom_fields ||= if @topic_view
+      (@topic_view.post_custom_fields || {})[object.id] || {}
+    else
+      object.custom_fields
     end
+  end
 
 end

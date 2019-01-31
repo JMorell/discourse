@@ -2,14 +2,18 @@ require "mini_mime"
 require_dependency 'upload_creator'
 
 class UploadsController < ApplicationController
-  before_filter :ensure_logged_in, except: [:show]
-  skip_before_filter :preload_json, :check_xhr, :redirect_to_login_if_required, only: [:show]
+  requires_login except: [:show]
+
+  skip_before_action :preload_json, :check_xhr, :redirect_to_login_if_required, only: [:show]
 
   def create
-    # 50 characters ought to be enough for the upload type
-    type = params.require(:type).parameterize("_")[0..50]
+    # capture current user for block later on
+    me = current_user
 
-    if type == "avatar" && (SiteSetting.sso_overrides_avatar || !SiteSetting.allow_uploaded_avatars)
+    # 50 characters ought to be enough for the upload type
+    type = params.require(:type).parameterize(separator: "_")[0..50]
+
+    if type == "avatar" && !me.admin? && (SiteSetting.sso_overrides_avatar || !SiteSetting.allow_uploaded_avatars)
       return render json: failed_json, status: 422
     end
 
@@ -17,20 +21,44 @@ class UploadsController < ApplicationController
     file   = params[:file] || params[:files]&.first
     pasted = params[:pasted] == "true"
     for_private_message = params[:for_private_message] == "true"
+    for_site_setting = params[:for_site_setting] == "true"
+    is_api = is_api?
+    retain_hours = params[:retain_hours].to_i
 
-    if params[:synchronous] && (current_user.staff? || is_api?)
-      data = create_upload(file, url, type, for_private_message, pasted)
-      render json: data.as_json
-    else
-      Scheduler::Defer.later("Create Upload") do
-        begin
-          data = create_upload(file, url, type, for_private_message, pasted)
-        ensure
-          MessageBus.publish("/uploads/#{type}", (data || {}).as_json, client_ids: [params[:client_id]])
-        end
+    # note, atm hijack is processed in its own context and has not access to controller
+    # longer term we may change this
+    hijack do
+      begin
+        info = UploadsController.create_upload(
+          current_user: me,
+          file: file,
+          url: url,
+          type: type,
+          for_private_message: for_private_message,
+          for_site_setting: for_site_setting,
+          pasted: pasted,
+          is_api: is_api,
+          retain_hours: retain_hours
+        )
+      rescue => e
+        render json: failed_json.merge(message: e.message&.split("\n")&.first), status: 422
+      else
+        render json: UploadsController.serialize_upload(info), status: Upload === info ? 200 : 422
       end
-      render json: success_json
     end
+  end
+
+  def lookup_urls
+    params.permit(short_urls: [])
+    uploads = []
+
+    if (params[:short_urls] && params[:short_urls].length > 0)
+      PrettyText::Helpers.lookup_image_urls(params[:short_urls]).each do |short_url, url|
+        uploads << { short_url: short_url, url: url }
+      end
+    end
+
+    render json: uploads.to_json
   end
 
   def show
@@ -39,7 +67,6 @@ class UploadsController < ApplicationController
     RailsMultisite::ConnectionManagement.with_connection(params[:site]) do |db|
       return render_404 unless Discourse.store.internal?
       return render_404 if SiteSetting.prevent_anons_from_downloading_files && current_user.nil?
-      return render_404 if SiteSetting.login_required? && db == "default" && current_user.nil?
 
       if upload = Upload.find_by(sha1: params[:sha]) || Upload.find_by(id: params[:id], url: request.env["PATH_INFO"])
         opts = {
@@ -47,8 +74,12 @@ class UploadsController < ApplicationController
           content_type: MiniMime.lookup_by_filename(upload.original_filename)&.content_type,
         }
         opts[:disposition]   = "inline" if params[:inline]
-        opts[:disposition] ||= "attachment" unless FileHelper.is_image?(upload.original_filename)
-        send_file(Discourse.store.path_for(upload), opts)
+        opts[:disposition] ||= "attachment" unless FileHelper.is_supported_image?(upload.original_filename)
+
+        file_path = Discourse.store.path_for(upload)
+        return render_404 unless file_path
+
+        send_file(file_path, opts)
       else
         render_404
       end
@@ -61,9 +92,25 @@ class UploadsController < ApplicationController
     raise Discourse::NotFound
   end
 
-  def create_upload(file, url, type, for_private_message, pasted)
+  def self.serialize_upload(data)
+    # as_json.as_json is not a typo... as_json in AM serializer returns keys as symbols, we need them
+    # as strings here
+    serialized = UploadSerializer.new(data, root: nil).as_json.as_json if Upload === data
+    serialized ||= (data || {}).as_json
+  end
+
+  def self.create_upload(current_user:,
+                         file:,
+                         url:,
+                         type:,
+                         for_private_message:,
+                         for_site_setting:,
+                         pasted:,
+                         is_api:,
+                         retain_hours:)
+
     if file.nil?
-      if url.present? && is_api?
+      if url.present? && is_api
         maximum_upload_size = [SiteSetting.max_image_size_kb, SiteSetting.max_attachment_size_kb].max.kilobytes
         tempfile = FileHelper.download(
           url,
@@ -75,28 +122,26 @@ class UploadsController < ApplicationController
     else
       tempfile = file.tempfile
       filename = file.original_filename
-      content_type = file.content_type
     end
 
     return { errors: [I18n.t("upload.file_missing")] } if tempfile.nil?
 
     opts = {
       type: type,
-      content_type: content_type,
       for_private_message: for_private_message,
+      for_site_setting: for_site_setting,
       pasted: pasted,
     }
 
     upload = UploadCreator.new(tempfile, filename, opts).create_for(current_user.id)
 
     if upload.errors.empty? && current_user.admin?
-      retain_hours = params[:retain_hours].to_i
       upload.update_columns(retain_hours: retain_hours) if retain_hours > 0
     end
 
     upload.errors.empty? ? upload : { errors: upload.errors.values.flatten }
   ensure
-    tempfile&.close! rescue nil
+    tempfile&.close!
   end
 
 end

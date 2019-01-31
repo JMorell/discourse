@@ -1,3 +1,5 @@
+require_dependency 'inline_oneboxer'
+
 module PrettyText
   module Helpers
     extend self
@@ -9,7 +11,7 @@ module PrettyText
         I18n.t(key)
       else
         str = I18n.t(key, Hash[opts.entries].symbolize_keys).dup
-        opts.each { |k,v| str.gsub!("{{#{k.to_s}}}", v.to_s) }
+        opts.each { |k, v| str.gsub!("{{#{k.to_s}}}", v.to_s) }
         str
       end
     end
@@ -20,19 +22,21 @@ module PrettyText
       return "" unless user.present?
 
       # TODO: Add support for ES6 and call `avatar-template` directly
-      if !user.uploaded_avatar_id
-        avatar_template = User.default_template(username)
-      else
-        avatar_template = user.avatar_template
-      end
-
-      UrlHelper.schemaless UrlHelper.absolute avatar_template
+      UrlHelper.schemaless(UrlHelper.absolute(user.avatar_template))
     end
 
-    def mention_lookup(name)
-      return false   if name.blank?
-      return "group" if Group.exists?(name: name)
-      return "user"  if User.exists?(username_lower: name.downcase)
+    def lookup_primary_user_group(username)
+      return "" unless username
+      user = User.find_by(username_lower: username.downcase)
+      return "" unless user.present?
+
+      user.primary_group.try(:name) || ""
+    end
+
+    # Overwrite this in a plugin to change how markdown can format
+    # usernames on the server side
+    def format_username(username)
+      username
     end
 
     def category_hashtag_lookup(category_slug)
@@ -41,6 +45,35 @@ module PrettyText
       else
         nil
       end
+    end
+
+    def lookup_image_urls(urls)
+      map = {}
+      result = {}
+
+      urls.each do |url|
+        sha1 = Upload.sha1_from_short_url(url)
+        map[url] = sha1 if sha1
+      end
+
+      if map.length > 0
+        reverse_map = {}
+
+        map.each do |key, value|
+          reverse_map[value] ||= []
+          reverse_map[value] << key
+        end
+
+        Upload.where(sha1: map.values).pluck(:sha1, :url).each do |row|
+          sha1, url = row
+
+          if short_urls = reverse_map[sha1]
+            short_urls.each { |short_url| result[short_url] = url }
+          end
+        end
+      end
+
+      result
     end
 
     def get_topic_info(topic_id)
@@ -52,6 +85,11 @@ module PrettyText
           title: Rack::Utils.escape_html(topic.title),
           href: topic.url
         }
+      elsif topic
+        {
+          title: I18n.t("on_another_topic"),
+          href: Discourse.base_url + topic.slugless_url
+        }
       end
     end
 
@@ -61,7 +99,8 @@ module PrettyText
 
       if !is_tag && category = Category.query_from_hashtag_slug(text)
         [category.url_with_id, text]
-      elsif is_tag && tag = Tag.find_by_name(text.gsub!("#{tag_postfix}", ''))
+      elsif (!is_tag && tag = Tag.find_by(name: text)) ||
+            (is_tag && tag = Tag.find_by(name: text.gsub!("#{tag_postfix}", '')))
         ["#{Discourse.base_url}/tags/#{tag.name}", text]
       else
         nil

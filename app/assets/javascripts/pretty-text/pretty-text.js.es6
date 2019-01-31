@@ -1,13 +1,13 @@
-import { cook, setup } from 'pretty-text/engines/discourse-markdown';
-import { cook as cookIt, setup as setupIt } from 'pretty-text/engines/discourse-markdown-it';
-import { sanitize } from 'pretty-text/sanitizer';
-import WhiteLister from 'pretty-text/white-lister';
+import {
+  cook as cookIt,
+  setup as setupIt
+} from "pretty-text/engines/discourse-markdown-it";
 
-const _registerFns = [];
-const identity = value => value;
-
-export function registerOption(fn) {
-  _registerFns.push(fn);
+export function registerOption() {
+  // TODO next major version deprecate this
+  // if (window.console) {
+  //   window.console.log("registerOption is deprecated");
+  // }
 }
 
 export function buildOptions(state) {
@@ -15,36 +15,7 @@ export function buildOptions(state) {
     siteSettings,
     getURL,
     lookupAvatar,
-    getTopicInfo,
-    topicId,
-    categoryHashtagLookup,
-    userId,
-    getCurrentUser,
-    currentUser,
-    lookupAvatarByPostNumber
-  } = state;
-
-  if (!siteSettings.enable_experimental_markdown_it) {
-    setup();
-  }
-
-  const features = {
-    'bold-italics': true,
-    'auto-link': true,
-    'mentions': true,
-    'bbcode': true,
-    'quote': true,
-    'html': true,
-    'category-hashtag': true,
-    'onebox': true,
-    'newline': !siteSettings.traditional_markdown_linebreaks
-  };
-
-  const options = {
-    sanitize: true,
-    getURL,
-    features,
-    lookupAvatar,
+    lookupPrimaryUserGroup,
     getTopicInfo,
     topicId,
     categoryHashtagLookup,
@@ -52,46 +23,92 @@ export function buildOptions(state) {
     getCurrentUser,
     currentUser,
     lookupAvatarByPostNumber,
-    mentionLookup: state.mentionLookup,
-    allowedHrefSchemes: siteSettings.allowed_href_schemes ? siteSettings.allowed_href_schemes.split('|') : null,
-    markdownIt: siteSettings.enable_experimental_markdown_it
+    lookupPrimaryUserGroupByPostNumber,
+    formatUsername,
+    emojiUnicodeReplacer,
+    lookupImageUrls,
+    previewing,
+    linkify,
+    censoredWords
+  } = state;
+
+  let features = {
+    "bold-italics": true,
+    "auto-link": true,
+    mentions: true,
+    bbcode: true,
+    quote: true,
+    html: true,
+    "category-hashtag": true,
+    onebox: true,
+    linkify: linkify !== false,
+    newline: !siteSettings.traditional_markdown_linebreaks
   };
 
-  if (siteSettings.enable_experimental_markdown_it) {
-    setupIt(options, siteSettings, state);
-  } else {
-    // TODO deprecate this
-    _registerFns.forEach(fn => fn(siteSettings, options, state));
+  if (state.features) {
+    features = _.merge(features, state.features);
   }
+
+  const options = {
+    sanitize: true,
+    getURL,
+    features,
+    lookupAvatar,
+    lookupPrimaryUserGroup,
+    getTopicInfo,
+    topicId,
+    categoryHashtagLookup,
+    userId,
+    getCurrentUser,
+    currentUser,
+    lookupAvatarByPostNumber,
+    lookupPrimaryUserGroupByPostNumber,
+    formatUsername,
+    emojiUnicodeReplacer,
+    lookupImageUrls,
+    censoredWords,
+    allowedHrefSchemes: siteSettings.allowed_href_schemes
+      ? siteSettings.allowed_href_schemes.split("|")
+      : null,
+    allowedIframes: siteSettings.allowed_iframes
+      ? siteSettings.allowed_iframes.split("|")
+      : [],
+    markdownIt: true,
+    injectLineNumbersToPreview:
+      siteSettings.enable_advanced_editor_preview_sync,
+    previewing
+  };
+
+  // note, this will mutate options due to the way the API is designed
+  // may need a refactor
+  setupIt(options, siteSettings, state);
 
   return options;
 }
 
 export default class {
   constructor(opts) {
-    this.opts = opts || {};
-    this.opts.features = this.opts.features || {};
-    this.opts.sanitizer = (!!this.opts.sanitize) ? (this.opts.sanitizer || sanitize) : identity;
-    // We used to do a failsafe call to setup here
-    // under new engine we always expect setup to be called by buildOptions.
-    // setup();
+    if (!opts) {
+      opts = buildOptions({ siteSettings: {} });
+    }
+    this.opts = opts;
+  }
+
+  disableSanitizer() {
+    this.opts.sanitizer = this.opts.discourse.sanitizer = ident => ident;
   }
 
   cook(raw) {
-    if (!raw || raw.length === 0) { return ""; }
-
-    let result;
-
-    if (this.opts.markdownIt) {
-      result = cookIt(raw, this.opts);
-    } else {
-      result = cook(raw, this.opts);
+    if (!raw || raw.length === 0) {
+      return "";
     }
 
+    let result;
+    result = cookIt(raw, this.opts);
     return result ? result : "";
   }
 
   sanitize(html) {
-    return this.opts.sanitizer(html, new WhiteLister(this.opts));
+    return this.opts.sanitizer(html).trim();
   }
-};
+}

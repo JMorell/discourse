@@ -7,7 +7,6 @@
 
 he:
   site_settings:
-    discourse_narrative_bot_enabled: 'אפשרו את בוט הסיפורים של דיסקורס'
     disable_discourse_narrative_bot_welcome_post: "נטרלו את פוסט הברוכים הבאים מאת בוט הסיפורים של דיסקורס"
     discourse_narrative_bot_ignored_usernames: "שמות משתמשים שבוט הסיפורים של דיסקורס צריך להתעלם מהם"
     discourse_narrative_bot_disable_public_replies: "נטרלו תגובות פומביות מאת בוט הסיפורים של דיסקורס"
@@ -53,7 +52,6 @@ he:
         quote: "במרכזו של כל קושי מונחת הזדמנות"
         author: "אלברט אינשטיין"
       '2':
-        quote: "אתם חייבים להיות השינוי שאתם רוצים לראות בעולם."
         author: "מהאטמה גנדי"
       '3':
         quote: "אל תבכו כי זה נגמר, חייכו כי זה קרה."
@@ -117,6 +115,15 @@ he:
 
           `@%{discobot_username} %{reset_trigger} %{default_track}`
           > מתחיל את אחד הסיפורים האינטראקטיביים הבאים: %{tracks}.
+        bot_actions: |-
+          `@%{discobot_username} %{dice_trigger} 2d6`
+          > :game_die: 3, 6
+
+          `@%{discobot_username} %{quote_trigger}`
+          > :left_speech_bubble: _ניקטו במעשה אקראי של חסד, ללא ציפייה לתמורה, בטוחים בידיעה שיום אחד מישהו עלול לעשות אותו הדבר בשבילכם_ &mdash; הנסיכה דיינה
+
+          `@%{discobot_username} %{magic_8_ball_trigger}`
+          > :crystal_ball: אתם יכולים לסמוך על כך
       do_not_understand:
         first_response: |-
           הי, תודה על התגובה!
@@ -126,17 +133,57 @@ he:
         second_response: |-
           או, מצטער. אני עדיין לא מבין. :anguished:
 
-          אני רק בוט, אבל אם תרצו לפנות לאדם אמיתי, בידקו את [דף יצירת הקשר](/about).
+          אני רק בוט, אבל אם תרצו לפנות לאדם אמיתי, בידקו את [דף יצירת הקשר](%{base_path}/about).
 
           בינתיים, אשאר מחוץ לדרככם.
     new_user_narrative:
       reset_trigger: "משתמש/ת חדש/ה"
       cert_title: "כהוקרה על סיום מוצלח של מדריך המשתמשים החדש"
-      hello:
-        title: ":robot: ברכות!"
       images:
+        reply: |-
+          תמונה שווה - לחצתי על כפתור :heart: הלייק כדי שתדעו כמה אני מעריך זאת :heart_eyes:
         like_not_found: |-
           שכחתם לעשות לייק :heart: ל-[פוסט](%{url}) שלי? :crying_cat_face:
+        not_found: |-
+          נראה שלא העליתם תמונה אז בחרתי תמונה שאני _בטוח_ שתהנו ממנה.
+
+          `%{image_url}`
+
+          עכשיו נסו להעלות אותה, או להדביק את הקישור בשורה בפני עצמו!
+      formatting:
+        instructions: |-
+          תוכלו **להבליט** כמה מילים או _להטות_ בתגובה שלכם?
+
+          - הקלידו **bold** או `_italic_`
+
+          - או, לחצו על הכפתורים <kbd><b>B</b></kbd> או <kbd><i>I</i></kbd> בעורך
+        reply: |-
+          עבודה מעולה! HTML ו BBCodeגם עובדים בשביל פורמט - כדי ללמוד עוד, [נסו את המדריך הזה](http://commonmark.org/help) :nerd:
+        not_found: |-
+          אווו, לא מצאתי פירמוט בתגובה שלכם. :pencil2:
+
+          תוכלו לנסות שוב? השתמשו בכפתורי <kbd><b>B</b></kbd> הדגשה או <kbd><i>I</i></kbd> הטיה בעורך אם אתם נתקעים.
+      quoting:
+        instructions: |-
+          תוכלו לצטט אותי כשאתם משיבים, כדי שאדע בדיוק על איזה חלק אתם משיבים?
+
+          > אם זה קפה, בבקשה תביאו לי תה; אבל אם זה תה, בבקשה תביאו לי קפה.
+          >
+          > אחד הייתרונות של לדבר לעצמכם זה שאתם יודעים שלפחות מישהו מקשיב.
+          >
+          > יש אנשים שיודעים להשתמש במילים, ואחרים... אה, הםםםם, לא להשתמש.
+
+          בחרו את הטקסט של איזה &uarr; ציטוט שאתם מעדיפים, ולחצו על כפתור ה-**ציטוט** שמופיע על הבחירה שלכם - או כפתור ה-**מענה** בתחתית פוסט זה.
+
+          מתחת לציטוט, הוסיפו מילה או שתיים לגבי הסיבה שבחרתם את זה, בגלל שאני סקרן :thinking:
+        reply: |-
+          עבודה טובה, בחרתם את הציטוט האהוב עלי! :left_speech_bubble:
+      emoji:
+        reply: |-
+          זה :sparkles: _emojitastic!_ :sparkles:
+      mention:
+        reply: |-
+          _קראתם בשמי!?_ :raised_hand: אני מאמין שכן! :wave: ובכן, אני כאן! תודה שאיזכרתם אותי.  :ok_hand:
       certificate:
         alt: 'תעודת הישג'
     advanced_user_narrative:
@@ -145,10 +192,9 @@ he:
       title: ':arrow_up: יכולות משתמשים מתקדמים'
       recover:
         deleted_post_raw: 'מדוע @%{discobot_username} מחק/ה את הפוסט שלי? :anguished:'
-        instructions: |-
-          הו לא! נראה שבטעות מחקתי פוסט חדש שרק יצרתי עבורכם.
-
-          תוכלו לעזור לי <img src="%{base_uri}/images/font-awesome-rotate-left.png" width="16" height="16"> **להשיב** אותו?
+      category_hashtag:
+        reply: |-
+          מצויין! זיכרו שזה עובד בשביל קטגוריות _וגם_ תגיות, אם תגיות מאופשרות.
       details:
         reply: |-
           עבודה מעולה — תשומת הלב שלכם _לפרטים_ מוערצת!

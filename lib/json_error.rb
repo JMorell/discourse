@@ -1,8 +1,11 @@
 module JsonError
 
-  def create_errors_json(obj, type=nil)
+  def create_errors_json(obj, opts = nil)
+    opts ||= {}
+
     errors = create_errors_array obj
-    errors[:error_type] = type if type
+    errors[:error_type] = opts[:type] if opts[:type]
+    errors[:extras] = opts[:extras] if opts[:extras]
     errors
   end
 
@@ -20,6 +23,12 @@ module JsonError
 
     # If we're passed an array, it's an array of error messages
     return { errors: obj.map(&:to_s) } if obj.is_a?(Array) && obj.present?
+
+    if obj.is_a?(Exception)
+      message = obj.cause.message.presence || obj.cause.class.name if obj.cause
+      message = obj.message.presence || obj.class.name if message.blank?
+      return { errors: [message] } if message.present?
+    end
 
     # Log a warning (unless obj is nil)
     Rails.logger.warn("create_errors_json called with unrecognized type: #{obj.inspect}") if obj

@@ -1,71 +1,122 @@
-import { lookupCache } from 'pretty-text/oneboxer';
+import { lookupCache } from "pretty-text/oneboxer";
 
-//  Given a node in the document and its parent, determine whether it is on its own line or not.
-function isOnOneLine(link, parent) {
-  if (!parent) { return false; }
+import {
+  cachedInlineOnebox,
+  INLINE_ONEBOX_LOADING_CSS_CLASS,
+  INLINE_ONEBOX_CSS_CLASS
+} from "pretty-text/inline-oneboxer";
 
-  const siblings = parent.slice(1);
-  if ((!siblings) || (siblings.length < 1)) { return false; }
+const ONEBOX = 1;
+const INLINE = 2;
 
-  const idx = siblings.indexOf(link);
-  if (idx === -1) { return false; }
-
-  if (idx > 0) {
-    const prev = siblings[idx-1];
-    if (prev[0] !== 'br') { return false; }
-  }
-
-  if (idx < siblings.length) {
-    const next = siblings[idx+1];
-    if (next && (!((next[0] === 'br') || (typeof next === 'string' && next.trim() === "")))) { return false; }
-  }
-
-  return true;
+function isTopLevel(href) {
+  let split = href.split(/https?:\/\/[^\/]+[\/?]/i);
+  let hasExtra = split && split[1] && split[1].length > 0;
+  return !hasExtra;
 }
 
-//  We only onebox stuff that is on its own line.
-export function setup(helper) {
+function applyOnebox(state, silent) {
+  if (silent || !state.tokens) {
+    return;
+  }
 
-  if (helper.markdownIt) { return; }
+  for (let i = 1; i < state.tokens.length; i++) {
+    let token = state.tokens[i];
+    let prev = state.tokens[i - 1];
+    let mode =
+      prev.type === "paragraph_open" && prev.level === 0 ? ONEBOX : INLINE;
 
-  helper.onParseNode(event => {
-    const node = event.node,
-    path = event.path;
+    if (token.type === "inline") {
+      let children = token.children;
+      for (let j = 0; j < children.length - 2; j++) {
+        let child = children[j];
 
-    // We only care about links
-    if (node[0] !== 'a')  { return; }
+        if (
+          child.type === "link_open" &&
+          child.markup === "linkify" &&
+          child.info === "auto"
+        ) {
+          if (j > children.length - 3) {
+            continue;
+          }
 
-    const parent = path[path.length - 1];
+          if (j === 0 && token.leading_space) {
+            mode = INLINE;
+          } else if (j > 0) {
+            let prevSibling = children[j - 1];
+            if (prevSibling.tag !== "br" || prevSibling.leading_space) {
+              mode = INLINE;
+            }
+          }
 
-    // We don't onebox bbcode
-    if (node[1]['data-bbcode']) {
-      delete node[1]['data-bbcode'];
-      return;
-    }
+          // look ahead for soft or hard break
+          let text = children[j + 1];
+          let close = children[j + 2];
+          let lookahead = children[j + 3];
 
-    // We don't onebox mentions
-    if (node[1]['class'] === 'mention') { return; }
+          if (lookahead && lookahead.tag !== "br") {
+            mode = INLINE;
+          }
 
-    // Don't onebox links within a list
-    for (var i=0; i<path.length; i++) {
-      if (path[i][0] === 'li') { return; }
-    }
+          // check attrs only include a href
+          let attrs = child.attrs;
 
-    // If the link has a different label text than the link itself, don't onebox it.
-    const label = node[node.length-1];
-    if (label !== node[1]['href']) { return; }
+          if (!attrs || attrs.length !== 1 || attrs[0][0] !== "href") {
+            continue;
+          }
 
-    if (isOnOneLine(node, parent)) {
+          let href = attrs[0][1];
 
-      node[1]['class'] = 'onebox';
-      node[1].target = '_blank';
+          // edge case ... what if this is not http or protocoless?
+          if (!/^http|^\/\//i.test(href)) {
+            continue;
+          }
 
-      const contents = lookupCache(node[1].href);
-      if (contents) {
-        node[0] = '__RAW';
-        node[1] = contents;
-        node.length = 2;
+          // we already know text matches cause it is an auto link
+          if (!close || close.type !== "link_close") {
+            continue;
+          }
+
+          if (mode === ONEBOX) {
+            // we already determined earlier that 0 0 was href
+            let cached = lookupCache(attrs[0][1]);
+
+            if (cached) {
+              // replace link with 2 blank text nodes and inline html for onebox
+              child.type = "html_raw";
+              child.content = cached;
+              child.inline = true;
+
+              text.type = "html_raw";
+              text.content = "";
+              text.inline = true;
+
+              close.type = "html_raw";
+              close.content = "";
+              close.inline = true;
+            } else {
+              // decorate...
+              attrs.push(["class", "onebox"]);
+              attrs.push(["target", "_blank"]);
+            }
+          } else if (mode === INLINE && !isTopLevel(href)) {
+            const onebox = cachedInlineOnebox(href);
+
+            if (onebox && onebox.title) {
+              text.content = onebox.title;
+              attrs.push(["class", INLINE_ONEBOX_CSS_CLASS]);
+            } else {
+              attrs.push(["class", INLINE_ONEBOX_LOADING_CSS_CLASS]);
+            }
+          }
+        }
       }
     }
+  }
+}
+
+export function setup(helper) {
+  helper.registerPlugin(md => {
+    md.core.ruler.after("linkify", "onebox", applyOnebox);
   });
 }

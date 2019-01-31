@@ -21,13 +21,17 @@ class Cache < ActiveSupport::Cache::Store
     redis.reconnect
   end
 
+  def keys(pattern = "*")
+    redis.scan_each(match: "#{@namespace}:#{pattern}").to_a
+  end
+
   def clear
-    redis.keys("#{@namespace}:*").each do |k|
+    keys.each do |k|
       redis.del(k)
     end
   end
 
-  def namespaced_key(key, opts=nil)
+  def normalize_key(key, opts = nil)
     "#{@namespace}:" << key
   end
 

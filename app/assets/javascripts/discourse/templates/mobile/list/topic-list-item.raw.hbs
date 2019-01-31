@@ -8,17 +8,18 @@
   <div>
   {{/unless~}}
     <div class='main-link'>
-      {{raw "topic-status" topic=topic}}
-      {{topic-link topic}}
-      {{#if topic.featured_link}}
-        {{topic-featured-link topic}}
-      {{/if}}
-      {{#if topic.unseen}}
-        <span class="badge-notification new-topic"></span>
-      {{/if}}
-      {{~#if expandPinned}}
-      {{raw "list/topic-excerpt" topic=topic}}
-      {{/if~}}
+      {{~raw-plugin-outlet name="topic-list-before-status"}}
+      {{~raw "topic-status" topic=topic~}}
+      {{~topic-link topic~}}
+      {{~#if topic.featured_link~}}
+        {{~topic-featured-link topic~}}
+      {{~/if~}}
+      {{~#if topic.unseen~}}
+        &nbsp;<span class="badge-notification new-topic"></span>
+      {{~/if~}}
+      {{~#if expandPinned~}}
+      {{~raw "list/topic-excerpt" topic=topic~}}
+      {{~/if~}}
     </div>
 
     <div class='pull-right'>

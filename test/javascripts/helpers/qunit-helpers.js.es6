@@ -1,21 +1,34 @@
-/* global QUnit, fixtures */
+/* global QUnit, resetSite */
 
-import sessionFixtures from 'fixtures/session-fixtures';
-import siteFixtures from 'fixtures/site-fixtures';
-import HeaderComponent from 'discourse/components/site-header';
-import { forceMobile, resetMobile } from 'discourse/lib/mobile';
-import { resetPluginApi } from 'discourse/lib/plugin-api';
-import { clearCache as clearOutletCache, resetExtraClasses } from 'discourse/lib/plugin-connectors';
-import { clearHTMLCache } from 'discourse/helpers/custom-html';
-import { flushMap } from 'discourse/models/store';
-import { clearRewrites } from 'discourse/lib/url';
+import sessionFixtures from "fixtures/session-fixtures";
+import HeaderComponent from "discourse/components/site-header";
+import { forceMobile, resetMobile } from "discourse/lib/mobile";
+import { resetPluginApi } from "discourse/lib/plugin-api";
+import {
+  clearCache as clearOutletCache,
+  resetExtraClasses
+} from "discourse/lib/plugin-connectors";
+import { clearHTMLCache } from "discourse/helpers/custom-html";
+import { flushMap } from "discourse/models/store";
+import { clearRewrites } from "discourse/lib/url";
+import { initSearchData } from "discourse/widgets/search-menu";
+import { resetDecorators } from "discourse/widgets/widget";
+import { resetCache as resetOneboxCache } from "pretty-text/oneboxer";
+import { resetCustomPostMessageCallbacks } from "discourse/controllers/topic";
 
-
-function currentUser() {
-  return Discourse.User.create(sessionFixtures['/session/current.json'].current_user);
+export function currentUser() {
+  return Discourse.User.create(
+    sessionFixtures["/session/current.json"].current_user
+  );
 }
 
-function logIn() {
+export function replaceCurrentUser(properties) {
+  const user = Discourse.User.current();
+  user.setProperties(properties);
+  Discourse.User.resetCurrent(user);
+}
+
+export function logIn() {
   Discourse.User.resetCurrent(currentUser());
 }
 
@@ -23,52 +36,70 @@ const Plugin = $.fn.modal;
 const Modal = Plugin.Constructor;
 
 function AcceptanceModal(option, _relatedTarget) {
-  return this.each(function () {
-    var $this   = $(this);
-    var data    = $this.data('bs.modal');
-    var options = $.extend({}, Modal.DEFAULTS, $this.data(), typeof option === 'object' && option);
+  return this.each(function() {
+    var $this = $(this);
+    var data = $this.data("bs.modal");
+    var options = $.extend(
+      {},
+      Modal.DEFAULTS,
+      $this.data(),
+      typeof option === "object" && option
+    );
 
-    if (!data) $this.data('bs.modal', (data = new Modal(this, options)));
-    data.$body = $('#ember-testing');
+    if (!data) $this.data("bs.modal", (data = new Modal(this, options)));
+    data.$body = $("#ember-testing");
 
-    if (typeof option === 'string') data[option](_relatedTarget);
+    if (typeof option === "string") data[option](_relatedTarget);
     else if (options.show) data.show(_relatedTarget);
   });
 }
 
-window.bootbox.$body = $('#ember-testing');
+window.bootbox.$body = $("#ember-testing");
 $.fn.modal = AcceptanceModal;
 
-function acceptance(name, options) {
-  module("Acceptance: " + name, {
+let _pretenderCallbacks = [];
+
+export function applyPretender(server, helper) {
+  _pretenderCallbacks.forEach(cb => cb(server, helper));
+}
+
+export function acceptance(name, options) {
+  options = options || {};
+
+  if (options.pretend) {
+    _pretenderCallbacks.push(options.pretend);
+  }
+
+  QUnit.module("Acceptance: " + name, {
     beforeEach() {
       resetMobile();
 
       // For now don't do scrolling stuff in Test Mode
-      HeaderComponent.reopen({examineDockHeader: function() { }});
+      HeaderComponent.reopen({ examineDockHeader: function() {} });
 
       resetExtraClasses();
-      const siteJson = siteFixtures['site.json'].site;
-      if (options) {
-        if (options.beforeEach) {
-          options.beforeEach.call(this);
-        }
+      if (options.beforeEach) {
+        options.beforeEach.call(this);
+      }
 
-        if (options.mobileView) {
-          forceMobile();
-        }
+      if (options.mobileView) {
+        forceMobile();
+      }
 
-        if (options.loggedIn) {
-          logIn();
-        }
+      if (options.loggedIn) {
+        logIn();
+      }
 
-        if (options.settings) {
-          Discourse.SiteSettings = jQuery.extend(true, Discourse.SiteSettings, options.settings);
-        }
+      if (options.settings) {
+        Discourse.SiteSettings = jQuery.extend(
+          true,
+          Discourse.SiteSettings,
+          options.settings
+        );
+      }
 
-        if (options.site) {
-          Discourse.Site.resetCurrent(Discourse.Site.create(jQuery.extend(true, {}, siteJson, options.site)));
-        }
+      if (options.site) {
+        resetSite(Discourse.SiteSettings, options.site);
       }
 
       clearOutletCache();
@@ -82,26 +113,32 @@ function acceptance(name, options) {
         options.afterEach.call(this);
       }
       flushMap();
+      localStorage.clear();
       Discourse.User.resetCurrent();
-      Discourse.Site.resetCurrent(Discourse.Site.create(jQuery.extend(true, {}, fixtures['site.json'].site)));
-
+      resetSite(Discourse.SiteSettings);
       resetExtraClasses();
       clearOutletCache();
       clearHTMLCache();
       resetPluginApi();
       clearRewrites();
+      initSearchData();
+      resetDecorators();
+      resetOneboxCache();
+      resetCustomPostMessageCallbacks();
       Discourse.reset();
     }
   });
 }
 
-function controllerFor(controller, model) {
-  controller = Discourse.__container__.lookup('controller:' + controller);
-  if (model) { controller.set('model', model ); }
+export function controllerFor(controller, model) {
+  controller = Discourse.__container__.lookup("controller:" + controller);
+  if (model) {
+    controller.set("model", model);
+  }
   return controller;
 }
 
-function asyncTestDiscourse(text, func) {
+export function asyncTestDiscourse(text, func) {
   QUnit.test(text, function(assert) {
     const done = assert.async();
     Ember.run(() => {
@@ -111,7 +148,7 @@ function asyncTestDiscourse(text, func) {
   });
 }
 
-function fixture(selector) {
+export function fixture(selector) {
   if (selector) {
     return $("#qunit-fixture").find(selector);
   }
@@ -151,7 +188,7 @@ QUnit.assert.containsInstance = function(collection, klass, message) {
   });
 };
 
-function waitFor(assert, callback, timeout) {
+export function waitFor(assert, callback, timeout) {
   timeout = timeout || 500;
 
   const done = assert.async();
@@ -160,11 +197,3 @@ function waitFor(assert, callback, timeout) {
     done();
   }, timeout);
 }
-
-export { acceptance,
-         controllerFor,
-         asyncTestDiscourse,
-         fixture,
-         logIn,
-         currentUser,
-         waitFor };
